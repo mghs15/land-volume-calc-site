@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset='utf-8' />
+<title>土の量・水の量</title>
+<meta name='viewport' content='initial-scale=1,maximum-scale=1,user-scalable=no' />
+<script src='https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.js'></script>
+<link href='https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.css' rel='stylesheet' />
+<script src="https://unpkg.com/pmtiles@2.5.0/dist/index.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@turf/turf@7/turf.min.js"></script>
+<script src="./getRasterTilePixel.js"></script>
+<script src="./measure.js"></script>
+<style>
+body { 
+  margin:0;
+  padding:0;
+}
+
+
+#map {
+  position: absolute;
+  top: 0;
+  bottom: 0px;
+  width: 100%;
+}
+
+#menu{
+  position: absolute;
+  padding: 5px 20px ;
+  margin: 0 0;
+  background: #eeeeee;
+  box-shadow: 0px 0px 0px 0px #eeeeee;
+  font-family: 'Open Sans', sans-serif;
+  //min-height: 300px;
+  pointer-events: auto;
+  z-index: 99999;
+}
+
+</style>
+</head>
+<body>
+
+<div id='menu'>
+  <form>
+  セルの大きさ：<input id="cellSide" type="number" value="25" /><br>
+  基準の数値：<input id="baseLevel" type="number" value="0" /><br>
+  データの種類：<select name="dataType" id="dataType">
+    <option value="elevation">標高</option>
+    <option value="lakedepth">湖水深</option>
+  </select>
+  </form>
+  <hr>
+  <div id="result">---</div>
+</div>
+
+<div id='map'></div>
+
+<script>
+
+/*************************************************/
+/*Maplibre 関係設定                              */
+/*************************************************/
+const map = new maplibregl.Map({
+  container: 'map', // container id
+  hash: true, //add #position on URL
+  style: 'https://mghs15.github.io/styling-tools-for-gsi-optbv/basic.json', // stylesheet location
+  center: [139.78148, 35.768793], // starting position [lng, lat]
+  zoom: 9, // starting zoom
+  minZoom: 6,
+  maxZoom: 24,
+  attributionControl: false,
+  clickTolerance: 10,
+  localIdeographFontFamily: ['MS Gothic', 'Hiragino Kaku Gothic Pro', 'sans-serif']
+});
+
+
+map.addControl(new maplibregl.AttributionControl({compact: true}));
+map.addControl(new maplibregl.NavigationControl(), 'bottom-left');
+map.addControl(new maplibregl.ScaleControl() , 'bottom-right');
+
+map.showTileBoundaries = false;
+
+/*************************************************/
+/*PMTILES 関係設定                               */
+/*************************************************/
+let protocol = new pmtiles.Protocol();
+maplibregl.addProtocol("pmtiles",protocol.tile);
+
+/*************************************************/
+/*初期化時 関係設定                              */
+/*************************************************/
+
+map.on('load', function() {
+
+  map.addSource("hazardmap", {
+    "type": "raster",
+    "minzoom":2,
+    "maxzoom":17,
+    "tiles":["https://disaportaldata.gsi.go.jp/raster/01_flood_l2_shinsuishin_data/{z}/{x}/{y}.png"],
+    "tileSize": 256,
+    "attribution":"<a href='https://disaportal.gsi.go.jp/hazardmapportal/hazardmap/copyright/opendata.html' target='_blank'>重ねるハザードマップ</a>"
+  });
+  map.addLayer({ 
+    "id":"hazardmap-background",
+    "type":"background",
+    "paint":{
+      "background-color": "#FFFFFF"
+    }
+  }, "水域");
+  map.addLayer({ 
+    "id":"hazardmap",
+    "type":"raster",
+    "source":"hazardmap",
+    "paint":{
+      "raster-opacity": 1
+    }
+  }, "水域");
+
+  map.addSource("photo", {
+    "type": "raster",
+    "minzoom":2,
+    "maxzoom":17,
+    "tiles":["https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg"],
+    "tileSize": 256,
+    "attribution":"<a href='https://maps.gsi.go.jp/development/ichiran.html' target='_blank'>地理院タイル</a>"
+  });
+  map.addLayer({ 
+    "id":"photo",
+    "type":"raster",
+    "source":"photo",
+    "paint":{
+      "raster-opacity": 0.8
+    },
+    "layout": {
+      "visibility": "none"
+    }
+  });
+  
+  map.addSource('target-grid-points', {
+    type: 'geojson',
+    data: {
+      type: 'FeatureCollection',
+      features: []
+    }
+  });
+  map.addLayer({
+    id: 'target-grid-points',
+    type: 'circle',
+    source: 'target-grid-points',
+    paint: {
+      'circle-radius': 4,
+      'circle-color': '#FF8888'
+    }
+  });
+  
+  map.addSource('target-line', {
+    type: 'geojson',
+    data: {
+      type: 'FeatureCollection',
+      features: []
+    }
+  });
+  map.addLayer({
+    id: 'target-line',
+    type: 'line',
+    source: 'target-line',
+    paint: {
+      'line-width': 4,
+      'line-color': '#FF0000'
+    }
+  });
+  map.addLayer({
+    id: 'target-line-circle',
+    type: 'circle',
+    source: 'target-line',
+    paint: {
+      'circle-radius': 4,
+      'circle-color': '#FF0000'
+    }
+  });
+  
+  map.addSource('target-tin', {
+    type: 'geojson',
+    data: {
+      type: 'FeatureCollection',
+      features: []
+    }
+  });
+  map.addLayer({
+    id: 'target-tin',
+    type: 'fill-extrusion',
+    source: 'target-tin',
+    paint: {
+      'fill-extrusion-color': ['rgb', ['%', ["*", ['get', 'dh'], 10], 255], 0, 0],
+      'fill-extrusion-height': ["*", ['get', 'dh'], 5],
+      'fill-extrusion-opacity': 0.8
+    }
+  });
+  
+  map.resize();
+});
+
+const switchPhoto = () => {
+  const layerId = "photo";
+  const visibility = map.getLayoutProperty(layerId, 'visibility')
+  if (visibility === 'visible') {
+    map.setLayoutProperty(layerId, 'visibility', 'none');
+  }else{
+    map.setLayoutProperty(layerId, 'visibility', 'visible');
+  }
+}
+
+/*************************************************/
+/*クリック 関係設定                              */
+/*************************************************/
+
+let isTrucking = false;
+let firstPoint = {};
+let interpolationPoints = [];
+
+const updateDrawing = (points) => {
+  map.getSource('target-line').setData({
+    "type": "Feature",
+    "geometry": {
+      "type": "LineString",
+      "coordinates": points
+    },
+    "properties": {}
+  });
+}
+
+map.on('click', e => {
+  //map.resize();
+  
+  // 面を閉じたか確認
+  let isEndPoint;
+  const sv = 5;
+  if(firstPoint.point){
+    console.log(e);
+    const firstPointXY = map.project(firstPoint.lngLat);
+    const dx = Math.abs(firstPointXY.x - e.point.x);
+    const dy = Math.abs(firstPointXY.y - e.point.y);
+    console.log(dx, dy);
+    if(dx < 10 && dy < 10){
+      isEndPoint = true;
+    }
+  }
+  
+  if(isEndPoint){
+    isTrucking = !isTrucking;
+    
+    interpolationPoints.push([firstPoint.lngLat.lng, firstPoint.lngLat.lat]);
+    updateDrawing(interpolationPoints);
+    
+    // 面積計算
+    const points = interpolationPoints.map( p => { 
+      return {lng: p[0], lat: p[1]};
+    });
+    const area = Math.floor(GSI.Utils.AreaCalculator.calc( points ));
+    console.log(area);
+    
+    // メッシュ単位で体積集計
+    const cellSide = +document.getElementById("cellSide").value / 1000;
+    const baseLevel = +document.getElementById("baseLevel").value;
+    const dataType = document.getElementById("dataType").value;
+    
+    calcMass(interpolationPoints, cellSide, baseLevel, dataType);
+    
+    firstPoint = {};
+  }else if(!isTrucking){
+    isTrucking = !isTrucking;
+    interpolationPoints = [];
+    
+    firstPoint = e;
+    interpolationPoints.push([e.lngLat.lng, e.lngLat.lat]);
+    updateDrawing(interpolationPoints);
+  }else{
+    interpolationPoints.push([e.lngLat.lng, e.lngLat.lat]);
+    updateDrawing(interpolationPoints);
+  }
+});
+
+map.on('mousemove', e => {
+  if(isTrucking){
+    const lastPoint = [e.lngLat.lng, e.lngLat.lat];
+    map.getSource('target-line').setData({
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [...interpolationPoints, lastPoint]
+      },
+      "properties": {}
+    });
+  }
+});
+
+const calcMass = (points, cellSide, baseLevel, dataType) => {
+  
+  const centerPoints = {
+    "type": "FeatureCollection", "features": []
+  };
+  const polygon = {
+    "type": "Feature",
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [points]
+    },
+    "properties": {}
+  };
+  const bbox = turf.bbox(polygon);
+  
+  console.log(bbox);
+  console.log(polygon);
+  
+  const grid = turf.squareGrid(bbox, cellSide, {
+    mask: polygon
+  });
+  
+  const n = grid.features.length;
+  if(n > 1000){
+    alert(`セル数が多すぎます。 ${n} セル`);
+    return;
+  }
+  
+  const promiseSet = [];
+  
+  console.log('データ取得開始…');
+  // タイルURLの指定
+  const tileUrl = (dataType == "lakedepth") ? `https://cyberjapandata.gsi.go.jp/xyz/lakedepth/{z}/{x}/{y}.png`
+                : `https://cyberjapandata.gsi.go.jp/xyz/dem_png/{z}/{x}/{y}.png`
+  
+  // ズームレベル
+  const zl = 14;
+  
+  let total = 0;
+  grid.features.forEach( cell => {
+    const cn = turf.center(cell);
+    const pm = getElevTileValue(cell, {lng: cn.geometry.coordinates[0], lat: cn.geometry.coordinates[1]}, tileUrl, zl);
+    promiseSet.push(pm);
+    centerPoints.features.push(cn);
+  });
+  
+  Promise.all(promiseSet).then((cells) => {
+    const geojson = {
+      "type": "FeatureCollection", "features": []
+    };
+    
+    let minH = 9999;
+    let maxH = 0;
+    
+    cells.forEach( cell => {
+    
+      if(!cell.properties.h){
+        //console.log(cell);
+        return;
+      }
+      
+      const dh = cell.properties.h - baseLevel;
+      cell.properties.dh = dh;
+      
+      if(minH > dh) minH = dh;
+      if(maxH < dh) maxH = dh;
+      
+      const vs = cell.geometry.coordinates[0].map( p => { 
+        return {lng: p[0], lat: p[1]};
+      });
+      const area = Math.floor(GSI.Utils.AreaCalculator.calc( vs ));      
+      const q = area * dh;
+      //console.log(cell.geometry.coordinates[0].length - 1);
+      total += q;
+      
+      cell.properties["area"] = area;
+      cell.properties["mass"] = total;
+      
+      console.log(cell);
+      geojson.features.push(cell);
+    });
+    
+    console.log(`合計 ${total} 立法メートル`);
+    document.getElementById("result").innerText = `合計約${Math.floor(total)}立法メートル（${n}点）`;
+    
+    map.getSource('target-grid-points').setData(centerPoints);
+    map.getSource('target-tin').setData(geojson);
+    
+    map.setPaintProperty('target-tin', 'fill-extrusion-color', [
+      "interpolate", ["linear"],
+      ["get", "dh"],
+      minH-1, "#FFFFFF",
+      maxH, "#FF0000"
+    ]);
+    
+  });
+  
+}
+
+/*************************************************/
+/*標高 関係設定                                  */
+/*************************************************/
+
+const getElevTileValue = (cell, cn, tileUrl, zl) => {
+
+  
+  const pow2_8 = Math.pow(2, 8);
+  const pow2_16 = Math.pow(2, 16);
+  const pow2_23 = Math.pow(2, 23);
+  const pow2_24 = Math.pow(2, 24);
+     
+  // データの取得・表示
+  return getRasterTilePixel(cn, zl, tileUrl, {})
+  .then(({r, g, b}) => {
+  
+  
+    let h = 0;
+
+    if (r != 128 || g != 0 || b != 0) {
+      const d = r * pow2_16 + g * pow2_8 + b;
+      h = (d < pow2_23) ? d : d - pow2_24;
+      if (h == -pow2_23) h = 0;
+      else h *= 0.01;
+      h = Math.floor(h * 100)/100;
+    }else {
+      // h = 0;
+    }
+    
+    cell.properties.h = h;
+    return Promise.resolve(cell);
+    
+  })
+  .catch((err) => {
+    console.error(err);
+    return Promise.resolve(cell);
+  });
+}
+
+</script>
+
+</body>
+</html>
