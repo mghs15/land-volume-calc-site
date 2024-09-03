@@ -317,7 +317,10 @@ const calcMass = (points, cellSide, baseLevel, dataType) => {
   });
   
   const n = grid.features.length;
-  if(n > 1000){
+  if(map.getZoom() < 10 && n > 200){
+    alert(`セル数が多すぎます。 ${n} セル`);
+    return;
+  }else if(n > 1000){
     alert(`セル数が多すぎます。 ${n} セル`);
     return;
   }
