@@ -380,7 +380,7 @@ const calcMass = (points, cellSide, baseLevel, dataType) => {
     });
     
     console.log(`合計 ${total} 立法メートル`);
-    document.getElementById("result").innerText = `合計約${Math.floor(total)}立法メートル（${n}点）`;
+    document.getElementById("result").innerText = `合計約${Math.floor(total).toLocaleString()}立法メートル（${n}点）`;
     
     map.getSource('target-grid-points').setData(centerPoints);
     map.getSource('target-tin').setData(geojson);
