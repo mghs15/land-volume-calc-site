@@ -42,8 +42,13 @@ body {
 
 <div id='menu'>
   <form>
-  セルの大きさ：<input id="cellSide" type="number" value="25" /><br>
+  セルの大きさ：<input id="cellSide" type="number" value="50" /><br>
   基準の数値：<input id="baseLevel" type="number" value="0" /><br>
+  セルの種類：<select name="gridType" id="gridType">
+    <option value="squareGrid">四角形</option>
+    <option value="hexGrid">六角形</option>
+    <option value="triangleGrid">三角形</option>
+  </select>
   データの種類：<select name="dataType" id="dataType">
     <option value="elevation">標高</option>
     <option value="lakedepth">湖水深</option>
@@ -263,8 +268,9 @@ map.on('click', e => {
     const cellSide = +document.getElementById("cellSide").value / 1000;
     const baseLevel = +document.getElementById("baseLevel").value;
     const dataType = document.getElementById("dataType").value;
+    const gridType = document.getElementById("gridType").value;
     
-    calcMass(interpolationPoints, cellSide, baseLevel, dataType);
+    calcMass(interpolationPoints, cellSide, baseLevel, dataType, gridType);
     
     firstPoint = {};
   }else if(!isTrucking){
@@ -294,7 +300,7 @@ map.on('mousemove', e => {
   }
 });
 
-const calcMass = (points, cellSide, baseLevel, dataType) => {
+const calcMass = (points, cellSide, baseLevel, dataType, gridType) => {
   
   const centerPoints = {
     "type": "FeatureCollection", "features": []
@@ -312,15 +318,15 @@ const calcMass = (points, cellSide, baseLevel, dataType) => {
   console.log(bbox);
   console.log(polygon);
   
-  const grid = turf.squareGrid(bbox, cellSide, {
-    mask: polygon
-  });
+  const grid = gridType == "triangleGrid" ? turf.triangleGrid(bbox, cellSide, {mask: polygon})
+             : gridType == "hexGrid" ? turf.hexGrid(bbox, cellSide, {mask: polygon})
+             : turf.squareGrid(bbox, cellSide, {mask: polygon});
   
   const n = grid.features.length;
   if(map.getZoom() < 10 && n > 200){
     alert(`セル数が多すぎます。 ${n} セル`);
     return;
-  }else if(n > 1000){
+  }else if(n > 2000){
     alert(`セル数が多すぎます。 ${n} セル`);
     return;
   }
@@ -337,7 +343,7 @@ const calcMass = (points, cellSide, baseLevel, dataType) => {
   
   let total = 0;
   grid.features.forEach( cell => {
-    const cn = turf.center(cell);
+    const cn = turf.centroid(cell);
     const pm = getElevTileValue(cell, {lng: cn.geometry.coordinates[0], lat: cn.geometry.coordinates[1]}, tileUrl, zl);
     promiseSet.push(pm);
     centerPoints.features.push(cn);
@@ -348,7 +354,7 @@ const calcMass = (points, cellSide, baseLevel, dataType) => {
       "type": "FeatureCollection", "features": []
     };
     
-    let minH = 9999;
+    let minH = 99999;
     let maxH = 0;
     
     cells.forEach( cell => {
